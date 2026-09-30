@@ -2,7 +2,7 @@
   "entities": {
     "Review": {
       "title": "Review",
-      "description": "Client reviews submitted for TornedoX",
+      "description": "Client reviews submitted for TornedoX with optional Google identity verification",
       "type": "object",
       "properties": {
         "name": {
@@ -21,6 +21,18 @@
           "description": "Business or company name",
           "maxLength": 100
         },
+        "photoURL": {
+          "type": "string",
+          "description": "Google Profile picture URL of the reviewer"
+        },
+        "email": {
+          "type": "string",
+          "description": "Reviewer email address"
+        },
+        "isGoogleUser": {
+          "type": "boolean",
+          "description": "True if verified via Google Sign-In"
+        },
         "rating": {
           "type": "number",
           "description": "Star rating from 1 to 5"
@@ -34,6 +46,10 @@
         "date": {
           "type": "string",
           "description": "Formatted date string"
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Numeric epoch millisecond timestamp"
         },
         "createdAt": {
           "type": "string",

@@ -1,5 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Star, MessageSquarePlus, CheckCircle2, X, Send, Quote, Sparkles, Trash2 } from 'lucide-react';
+import {
+  Star,
+  MessageSquarePlus,
+  CheckCircle2,
+  X,
+  Send,
+  Quote,
+  Sparkles,
+  Trash2,
+  LogOut,
+  Mail,
+  User as UserIcon,
+} from 'lucide-react';
 import {
   collection,
   addDoc,
@@ -8,13 +20,17 @@ import {
   doc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '../firebase.ts';
+import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { db, auth, googleProvider } from '../firebase.ts';
 
 interface ReviewItem {
   id: string;
   name: string;
   role?: string;
   business?: string;
+  photoURL?: string;
+  email?: string;
+  isGoogleUser?: boolean;
   rating: number;
   text: string;
   date: string;
@@ -25,8 +41,35 @@ interface ReviewItem {
 
 const STORAGE_KEY = 'tornedox_client_reviews';
 
+// Google multi-color SVG icon
+const GoogleIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24">
+    <path
+      fill="#4285F4"
+      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
+    />
+    <path
+      fill="#FBBC05"
+      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+    />
+    <path
+      fill="#EA4335"
+      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+    />
+  </svg>
+);
+
+// Fallback avatar helper
+const getFallbackAvatar = (name: string): string => {
+  const seed = encodeURIComponent(name.trim() || 'Client');
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${seed}&backgroundColor=df9920,d97706,b45309`;
+};
+
 export const Reviews: React.FC = () => {
-  // Load initial cached reviews from localStorage so there's never an empty flash
   const [reviews, setReviews] = useState<ReviewItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -40,8 +83,12 @@ export const Reviews: React.FC = () => {
     return [];
   });
 
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [photoURL, setPhotoURL] = useState('');
+  const [isGoogleUser, setIsGoogleUser] = useState(false);
   const [role, setRole] = useState('');
   const [business, setBusiness] = useState('');
   const [rating, setRating] = useState(5);
@@ -50,9 +97,53 @@ export const Reviews: React.FC = () => {
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const reviewsSectionRef = useRef<HTMLElement | null>(null);
 
-  // Helper to extract numeric epoch millisecond timestamp for accurate sorting
+  // Monitor Google Authentication State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user) {
+        setName(user.displayName || '');
+        setEmail(user.email || '');
+        setPhotoURL(user.photoURL || '');
+        setIsGoogleUser(true);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Handle 1-Click Google Sign In to retrieve real name & photo
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsSigningIn(true);
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      setName(user.displayName || '');
+      setEmail(user.email || '');
+      setPhotoURL(user.photoURL || '');
+      setIsGoogleUser(true);
+    } catch (err) {
+      console.warn('Google Sign-In canceled or failed:', err);
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleSignOutGoogle = async () => {
+    try {
+      await signOut(auth);
+      setName('');
+      setEmail('');
+      setPhotoURL('');
+      setIsGoogleUser(false);
+    } catch (err) {
+      console.warn('Sign out error:', err);
+    }
+  };
+
+  // Helper to extract timestamp
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getReviewTime = (r: { timestamp?: number; createdAt?: any; date?: string }): number => {
     if (r.timestamp && typeof r.timestamp === 'number') return r.timestamp;
@@ -67,16 +158,13 @@ export const Reviews: React.FC = () => {
     return 0;
   };
 
-  // Real-time Firestore sync: listens to all reviews in the collection
+  // Real-time Firestore sync: updates live on page across all users
   useEffect(() => {
     let unsubscribe = () => {};
 
     try {
       const reviewsCol = collection(db, 'reviews');
 
-      // Note: We deliberately query the collection directly without strict orderBy
-      // to guarantee that documents with pending server timestamps or missing createdAt
-      // are NEVER omitted from the query results!
       unsubscribe = onSnapshot(
         reviewsCol,
         (snapshot) => {
@@ -84,9 +172,12 @@ export const Reviews: React.FC = () => {
             const data = docSnap.data();
             return {
               id: docSnap.id,
-              name: data.name || 'Anonymous',
+              name: data.name || 'Anonymous Client',
               role: data.role || undefined,
               business: data.business || undefined,
+              photoURL: data.photoURL || undefined,
+              email: data.email || undefined,
+              isGoogleUser: Boolean(data.isGoogleUser),
               rating: typeof data.rating === 'number' ? data.rating : 5,
               text: data.text || '',
               date: data.date || 'Recently',
@@ -95,15 +186,11 @@ export const Reviews: React.FC = () => {
             };
           });
 
-          // Smart merge: merge all remote reviews with any pending optimistic local reviews
           setReviews((prev) => {
             const map = new Map<string, ReviewItem>();
-
-            // 1. Add all confirmed reviews from Firestore
             remoteReviews.forEach((r) => map.set(r.id, r));
 
-            // 2. Preserve any in-flight optimistic reviews (with temporary 'rev-' id)
-            // that are not yet confirmed in remoteReviews
+            // Keep optimistic local review while sync settles
             prev.forEach((p) => {
               if (p.id.startsWith('rev-')) {
                 const alreadySynced = remoteReviews.some(
@@ -115,12 +202,10 @@ export const Reviews: React.FC = () => {
               }
             });
 
-            // 3. Sort all reviews: newest first
             const combined = Array.from(map.values()).sort(
               (a, b) => getReviewTime(b) - getReviewTime(a)
             );
 
-            // Update localStorage cache
             try {
               localStorage.setItem(STORAGE_KEY, JSON.stringify(combined));
             } catch {
@@ -129,45 +214,9 @@ export const Reviews: React.FC = () => {
 
             return combined;
           });
-
-          // If there are any older reviews previously saved in localStorage that
-          // never made it to Firestore, automatically sync them to Firestore once!
-          try {
-            const localSaved = localStorage.getItem(STORAGE_KEY);
-            if (localSaved) {
-              const parsed: ReviewItem[] = JSON.parse(localSaved);
-              if (Array.isArray(parsed)) {
-                parsed.forEach(async (item) => {
-                  const existsInRemote = snapshot.docs.some((d) => {
-                    const data = d.data();
-                    return data.name === item.name && data.text === item.text;
-                  });
-                  // If not in Firestore and valid, upload to Firestore
-                  if (!existsInRemote && item.name && item.text) {
-                    try {
-                      await addDoc(reviewsCol, {
-                        name: item.name,
-                        role: item.role || '',
-                        business: item.business || '',
-                        rating: item.rating || 5,
-                        text: item.text,
-                        date: item.date || 'Recently',
-                        timestamp: item.timestamp || Date.now(),
-                        createdAt: serverTimestamp(),
-                      });
-                    } catch {
-                      // ignore background migration errors
-                    }
-                  }
-                });
-              }
-            }
-          } catch {
-            // ignore
-          }
         },
         (error) => {
-          console.warn('Firestore real-time sync warning:', error.message);
+          console.warn('Firestore sync warning:', error.message);
         }
       );
     } catch (err) {
@@ -190,8 +239,17 @@ export const Reviews: React.FC = () => {
       year: 'numeric',
     });
 
+    const finalPhoto =
+      photoURL.trim() ||
+      (email.includes('@')
+        ? `https://unavatar.io/${encodeURIComponent(email.trim().toLowerCase())}?fallback=${encodeURIComponent(getFallbackAvatar(name))}`
+        : getFallbackAvatar(name));
+
     const newReviewData = {
       name: name.trim(),
+      email: email.trim(),
+      photoURL: finalPhoto,
+      isGoogleUser: Boolean(isGoogleUser),
       role: role.trim() || '',
       business: business.trim() || '',
       rating: rating,
@@ -200,30 +258,35 @@ export const Reviews: React.FC = () => {
       timestamp: now,
     };
 
-    // Optimistic UI update: instantly shows at the very top of the list (0ms delay)
+    // 1. Instantly display on this page with 0ms delay
     const optimisticReview: ReviewItem = {
       id: tempId,
       ...newReviewData,
       role: newReviewData.role || undefined,
       business: newReviewData.business || undefined,
+      photoURL: newReviewData.photoURL || undefined,
+      email: newReviewData.email || undefined,
     };
 
-    // Prepend to current state so user sees it right away
     setReviews((prev) => [optimisticReview, ...prev.filter((r) => r.id !== tempId)]);
 
-    // Clear form inputs & close modal immediately
-    setName('');
+    // Clear form inputs
+    if (!currentUser) {
+      setName('');
+      setEmail('');
+      setPhotoURL('');
+      setIsGoogleUser(false);
+    }
     setRole('');
     setBusiness('');
     setText('');
     setRating(5);
     setIsModalOpen(false);
 
-    // Visual feedback: glowing border & toast
+    // Visual feedback
     setNewlyAddedId(tempId);
     setShowToast(true);
 
-    // Scroll smoothly to the newly added review
     setTimeout(() => {
       const el = document.getElementById(tempId);
       if (el) {
@@ -234,9 +297,9 @@ export const Reviews: React.FC = () => {
     setTimeout(() => {
       setShowToast(false);
       setNewlyAddedId(null);
-    }, 4000);
+    }, 4500);
 
-    // Persist to Cloud Database (Firestore)
+    // 2. Persist to Cloud Database (Firestore)
     try {
       await addDoc(collection(db, 'reviews'), {
         ...newReviewData,
@@ -244,17 +307,6 @@ export const Reviews: React.FC = () => {
       });
     } catch (err) {
       console.error('Error saving review to Firestore:', err);
-      // Fallback save to localStorage if offline
-      try {
-        const currentCached = localStorage.getItem(STORAGE_KEY);
-        const parsed = currentCached ? JSON.parse(currentCached) : [];
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify([optimisticReview, ...parsed.filter((p: ReviewItem) => p.id !== tempId)])
-        );
-      } catch {
-        // ignore
-      }
     } finally {
       setIsSubmitting(false);
     }
@@ -262,10 +314,7 @@ export const Reviews: React.FC = () => {
 
   const handleDelete = async (id: string, clientName: string) => {
     if (window.confirm(`Are you sure you want to remove the review by "${clientName}"?`)) {
-      // Optimistic local remove
       setReviews((prev) => prev.filter((r) => r.id !== id));
-
-      // Remove from Firestore if it's a Firestore document ID
       if (!id.startsWith('rev-')) {
         try {
           await deleteDoc(doc(db, 'reviews', id));
@@ -276,7 +325,6 @@ export const Reviews: React.FC = () => {
     }
   };
 
-  // Calculate average rating across all reviews
   const averageRating =
     reviews.length > 0
       ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1)
@@ -288,14 +336,14 @@ export const Reviews: React.FC = () => {
       ref={reviewsSectionRef}
       className="py-10 sm:py-12 px-4 sm:px-6 border-t border-slate-200/70 relative"
     >
-      {/* Real-time Global Success Toast */}
+      {/* Toast Notification */}
       {showToast && (
         <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2.5 bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-xl border border-emerald-500 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <CheckCircle2 size={18} className="shrink-0 text-white" />
           <div>
             <p className="text-xs sm:text-sm font-bold">Review Published Live!</p>
             <p className="text-[11px] text-emerald-100">
-              Synced across all devices and visible to everyone.
+              Visible automatically on this page for all visitors.
             </p>
           </div>
         </div>
@@ -315,7 +363,7 @@ export const Reviews: React.FC = () => {
               </span>
             </div>
             <p className="text-sm text-[#64748B]">
-              Real-time feedback and ratings from our valued clients and partners.
+              Verified feedback and ratings from our valued clients and partners.
             </p>
           </div>
 
@@ -356,16 +404,20 @@ export const Reviews: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                <Sparkles size={13} />
-                <span>Verified Client Feedback</span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                  <Sparkles size={13} />
+                  <span>Verified Reviews</span>
+                </div>
               </div>
             </div>
 
-            {/* Reviews List: All reviews rendered in order */}
+            {/* Reviews List: Displays all reviews directly on the page */}
             <div className="space-y-3">
               {reviews.map((rev) => {
                 const isNew = rev.id === newlyAddedId;
+                const avatar = rev.photoURL || getFallbackAvatar(rev.name);
+
                 return (
                   <div
                     key={rev.id}
@@ -377,22 +429,27 @@ export const Reviews: React.FC = () => {
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3 mb-2.5">
-                      {/* Client Info */}
+                      {/* Client Info with Real Google / Email Profile Photo */}
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-800 to-amber-600 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
-                          {rev.name
-                            .split(' ')
-                            .map((n) => n[0])
-                            .slice(0, 2)
-                            .join('')
-                            .toUpperCase() || 'CX'}
-                        </div>
+                        <img
+                          src={avatar}
+                          alt={rev.name}
+                          referrerPolicy="no-referrer"
+                          className="w-10 h-10 rounded-full object-cover shrink-0 shadow-xs ring-2 ring-amber-400/40 bg-slate-100"
+                        />
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <h4 className="text-sm font-bold text-slate-900">{rev.name}</h4>
-                            <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/70">
-                              Client
-                            </span>
+                            {rev.isGoogleUser ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200/80">
+                                <GoogleIcon size={11} />
+                                Google User
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                Verified Client
+                              </span>
+                            )}
                             {isNew && (
                               <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300 animate-pulse">
                                 Just Added!
@@ -435,7 +492,7 @@ export const Reviews: React.FC = () => {
                       <p className="italic">{rev.text}</p>
                     </div>
 
-                    {/* Delete option for admin / testing */}
+                    {/* Delete option */}
                     <button
                       onClick={() => handleDelete(rev.id, rev.name)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-2 right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
@@ -461,7 +518,7 @@ export const Reviews: React.FC = () => {
             </h3>
 
             <p className="text-xs sm:text-sm text-slate-500 max-w-sm mb-4 leading-relaxed">
-              Worked with TornedoX? Share your experience with us and it will be visible to everyone!
+              Worked with TornedoX? Share your experience with us and it will automatically appear here!
             </p>
 
             <button
@@ -474,10 +531,10 @@ export const Reviews: React.FC = () => {
           </div>
         )}
 
-        {/* Modal for Writing a Review */}
+        {/* Modal for Writing a Review directly on the Page */}
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 relative animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] overflow-y-auto">
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
@@ -486,18 +543,79 @@ export const Reviews: React.FC = () => {
                 <X size={20} />
               </button>
 
-              <form onSubmit={handleSubmit}>
+              <div className="mb-4">
                 <h3 className="text-lg font-bold text-[#DF9920] mb-1">
-                  Write a Review
+                  Write a Client Review
                 </h3>
-                <p className="text-xs text-slate-500 mb-4">
-                  Share your experience working with TornedoX. All submitted reviews will stay visible on the page!
+                <p className="text-xs text-slate-500">
+                  Share your experience. Sign in with Google to use your verified Google name & photo!
                 </p>
+              </div>
 
+              {/* Google Authentication Box */}
+              <div className="mb-4 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                {isGoogleUser && name ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 overflow-hidden">
+                      {photoURL ? (
+                        <img
+                          src={photoURL}
+                          alt={name}
+                          referrerPolicy="no-referrer"
+                          className="w-10 h-10 rounded-full object-cover ring-2 ring-blue-500/50 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                          {name[0]?.toUpperCase()}
+                        </div>
+                      )}
+                      <div className="overflow-hidden">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-bold text-slate-900 truncate">{name}</p>
+                          <CheckCircle2 size={13} className="text-blue-600 shrink-0" />
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate">
+                          {email || 'Google Account verified'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSignOutGoogle}
+                      className="text-[11px] text-slate-500 hover:text-red-500 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer shrink-0"
+                      title="Switch account"
+                    >
+                      <LogOut size={12} />
+                      <span>Switch</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-[11px] font-semibold text-slate-700 mb-2">
+                      Auto-fill your Google Name & Profile Photo:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      disabled={isSigningIn}
+                      className="w-full flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-100 shadow-2xs transition-colors cursor-pointer"
+                    >
+                      <GoogleIcon size={18} />
+                      <span>
+                        {isSigningIn ? 'Connecting to Google...' : 'Continue with Google'}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Review Form */}
+              <form onSubmit={handleSubmit}>
                 {/* Rating Selector */}
-                <div className="mb-4">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Rating
+                <div className="mb-3.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Rating *
                   </label>
                   <div className="flex items-center gap-1.5">
                     {[1, 2, 3, 4, 5].map((star) => (
@@ -527,15 +645,31 @@ export const Reviews: React.FC = () => {
 
                 {/* Name */}
                 <div className="mb-3">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Your Name *
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                    <UserIcon size={12} className="text-slate-500" />
+                    <span>Your Name *</span>
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. Rahul Sharma"
+                    placeholder="e.g. Bibek Barman"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#DF9920] focus:border-[#DF9920]"
+                  />
+                </div>
+
+                {/* Email Address */}
+                <div className="mb-3">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
+                    <Mail size={12} className="text-slate-500" />
+                    <span>Email Address (Optional)</span>
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="e.g. yourname@gmail.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#DF9920] focus:border-[#DF9920]"
                   />
                 </div>
@@ -544,7 +678,7 @@ export const Reviews: React.FC = () => {
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Role
+                      Role (Optional)
                     </label>
                     <input
                       type="text"
@@ -556,7 +690,7 @@ export const Reviews: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Company / Business
+                      Company (Optional)
                     </label>
                     <input
                       type="text"
@@ -576,14 +710,14 @@ export const Reviews: React.FC = () => {
                   <textarea
                     required
                     rows={3}
-                    placeholder="Tell us about the solution or experience..."
+                    placeholder="Share your experience working with TornedoX..."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     className="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#DF9920] focus:border-[#DF9920] resize-none"
                   />
                 </div>
 
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => setIsModalOpen(false)}
@@ -597,7 +731,7 @@ export const Reviews: React.FC = () => {
                     className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#DF9920] hover:bg-[#c98415] disabled:opacity-70 rounded-lg shadow-xs transition-colors cursor-pointer"
                   >
                     <Send size={13} />
-                    <span>Publish Review Live</span>
+                    <span>Publish Review</span>
                   </button>
                 </div>
               </form>

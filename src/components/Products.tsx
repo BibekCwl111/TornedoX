@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Sparkles, CheckCircle2, Star } from 'lucide-react';
+import { ArrowRight, Sparkles, CheckCircle2, Star, ExternalLink } from 'lucide-react';
 import biometricPhoto from '../assets/biometric-product.png';
 import qrProductPhoto from '../assets/qr-product.png';
 import googleReviewPhoto from '../assets/google-review-qr.png';
@@ -214,10 +214,16 @@ export const Products: React.FC<ProductsProps> = ({ onContactClick }) => {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                  <span className="text-xs text-slate-500">
-                    Available in desk standees & countertop cards
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                  <a
+                    href="https://g.page/r/CdFNHCNOLzYGEAI/review"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-semibold py-1 hover:underline"
+                  >
+                    <span>Test Live Review Link</span>
+                    <ExternalLink size={12} />
+                  </a>
                   <button
                     onClick={() => onContactClick('Google Review QR Standee')}
                     className="inline-flex items-center gap-1.5 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-[#DF9920] text-white hover:bg-[#c98415] active:bg-[#b0720f] shadow-xs transition-colors cursor-pointer"
