@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "Review": {
+      "title": "Review",
+      "description": "Client reviews submitted for TornedoX",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the client",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "description": "Role or designation of the client",
+          "maxLength": 100
+        },
+        "business": {
+          "type": "string",
+          "description": "Business or company name",
+          "maxLength": 100
+        },
+        "rating": {
+          "type": "number",
+          "description": "Star rating from 1 to 5"
+        },
+        "text": {
+          "type": "string",
+          "description": "The review commentary",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "date": {
+          "type": "string",
+          "description": "Formatted date string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation"
+        }
+      },
+      "required": ["name", "rating", "text"]
+    }
+  },
+  "firestore": {
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Publicly readable client reviews and ratings"
+    }
+  }
+}
