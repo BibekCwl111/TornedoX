@@ -1,0 +1,8 @@
+{
+  "name": "TornedoX - Technology, Automation & Innovation",
+  "description": "Clean, modern digital visiting card and portfolio website for TornedoX. Practical technology, software, hardware, and automation solutions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
