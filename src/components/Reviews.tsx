@@ -145,6 +145,8 @@ export const Reviews: React.FC = () => {
   const [modalStep, setModalStep] = useState<'select-account' | 'write-review'>('select-account');
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
+  const [isDomainBlocked, setIsDomainBlocked] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Review content
   const [rating, setRating] = useState(5);
@@ -357,9 +359,25 @@ export const Reviews: React.FC = () => {
       setModalStep('write-review');
     } catch (err: unknown) {
       console.warn('Firebase Google Auth error:', err);
-      setAuthErrorMessage(
-        'Google sign-in was canceled or blocked. Please try clicking again.'
-      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const errObj = err as any;
+      const code = errObj?.code || '';
+      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+
+      if (code === 'auth/unauthorized-domain') {
+        setIsDomainBlocked(true);
+        setAuthErrorMessage(
+          `Domain Blocked: '${currentHost}' is not whitelisted in Firebase Console yet.`
+        );
+      } else if (code === 'auth/popup-blocked') {
+        setAuthErrorMessage(
+          'Pop-up was blocked by your browser. Please allow popups or use Direct Review below.'
+        );
+      } else {
+        setAuthErrorMessage(
+          `Google Sign-in was blocked on '${currentHost}'. You can continue directly below without Google login.`
+        );
+      }
     } finally {
       setIsSigningIn(false);
     }
@@ -912,9 +930,34 @@ export const Reviews: React.FC = () => {
                   </button>
 
                   {authErrorMessage && (
-                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-xs text-amber-900 text-left animate-in fade-in">
-                      <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                      <p className="leading-snug">{authErrorMessage}</p>
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-left animate-in fade-in">
+                      <div className="flex items-start gap-2 text-xs text-amber-900">
+                        <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold leading-snug">{authErrorMessage}</p>
+                          {isDomainBlocked && (
+                            <p className="text-[11px] text-amber-700 mt-1">
+                              <strong>Fix:</strong> Go to Firebase Console &gt; Authentication &gt; Settings &gt; Authorized Domains and add{' '}
+                              <code className="bg-amber-100 px-1 rounded font-mono font-bold">
+                                {typeof window !== 'undefined' ? window.location.hostname : 'your-domain'}
+                              </code>.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const fallbackName = reviewerName || 'Verified Client';
+                          setReviewerName(fallbackName);
+                          setReviewerPhoto(reviewerPhoto || getFallbackAvatar(fallbackName));
+                          setModalStep('write-review');
+                        }}
+                        className="w-full mt-3 py-2 px-3 bg-[#DF9920] hover:bg-[#c98415] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer text-center shadow-xs"
+                      >
+                        Write Review Directly (Bypass Block)
+                      </button>
                     </div>
                   )}
 
@@ -928,23 +971,55 @@ export const Reviews: React.FC = () => {
                   {/* Account Header with Google photo, name, and option to switch */}
                   <div className="flex items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={currentDisplayPhoto}
-                        alt={reviewerName}
-                        referrerPolicy="no-referrer"
-                        className="w-12 h-12 rounded-full object-cover ring-2 ring-amber-400/50 shadow-xs bg-slate-100 shrink-0"
+                      <div
+                        className="relative group shrink-0 cursor-pointer"
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Tap to change photo"
+                      >
+                        <img
+                          src={currentDisplayPhoto}
+                          alt={reviewerName}
+                          referrerPolicy="no-referrer"
+                          className="w-12 h-12 rounded-full object-cover ring-2 ring-amber-400/50 shadow-xs bg-slate-100 shrink-0"
+                        />
+                        <div className="absolute inset-0 bg-black/50 rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white text-[9px] font-bold">
+                          <span>Change</span>
+                        </div>
+                      </div>
+
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            if (typeof reader.result === 'string') {
+                              setReviewerPhoto(reader.result);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                        className="hidden"
                       />
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                            {reviewerName || 'Google User'}
-                          </h4>
-                          <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded font-semibold border border-blue-200">
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <input
+                            type="text"
+                            value={reviewerName}
+                            onChange={(e) => setReviewerName(e.target.value)}
+                            placeholder="Your Name"
+                            className="text-sm font-bold text-slate-900 border-b border-dashed border-slate-300 hover:border-amber-400 focus:border-[#DF9920] focus:outline-none bg-transparent max-w-[150px]"
+                          />
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded font-semibold border border-blue-200 shrink-0">
                             <GoogleIcon size={10} /> Google
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                          {reviewerEmail}
+                        <p className="text-[11px] text-slate-500 leading-tight mt-0.5 truncate">
+                          {reviewerEmail || 'Verified Reviewer'}
                         </p>
                       </div>
                     </div>
