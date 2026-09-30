@@ -1,7 +1,8 @@
 import React from 'react';
-import { ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Sparkles, CheckCircle2, Star } from 'lucide-react';
 import biometricPhoto from '../assets/biometric-product.png';
 import qrProductPhoto from '../assets/qr-product.png';
+import googleReviewPhoto from '../assets/google-review-qr.png';
 
 interface ProductsProps {
   onContactClick: (productName?: string) => void;
@@ -152,6 +153,76 @@ export const Products: React.FC<ProductsProps> = ({ onContactClick }) => {
                     className="inline-flex items-center gap-1.5 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800 shadow-xs transition-colors cursor-pointer"
                   >
                     <span>Get QR Solution</span>
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Product 3: Google Review QR Standee */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-amber-400 hover:shadow-md transition-all overflow-hidden group">
+            <div className="p-4 sm:p-5">
+              {/* Product Visual Photo */}
+              <div className="w-full h-56 sm:h-72 rounded-xl overflow-hidden bg-slate-900 relative mb-4 border border-slate-200/90 shadow-inner flex items-center justify-center">
+                <img
+                  src={googleReviewPhoto}
+                  alt="Google Review QR Standee"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                />
+                <div className="absolute top-3 left-3">
+                  <span className="px-2.5 py-1 text-[11px] font-bold rounded-md bg-slate-900/85 text-amber-400 border border-amber-500/40 backdrop-blur-xs flex items-center gap-1">
+                    <Star size={12} className="fill-amber-400" />
+                    Reputation & Growth
+                  </span>
+                </div>
+              </div>
+
+              {/* Product Info */}
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                  <h3 className="text-lg sm:text-xl font-bold text-[#DF9920]">
+                    Google Review QR Standee
+                  </h3>
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                    Fastest Review Collector
+                  </span>
+                </div>
+
+                <p className="text-sm text-[#64748B] mb-3 leading-relaxed">
+                  Smart interactive Google Review standees designed for retail stores, restaurants, clinics, and offices. Convert walk-in visitors into verified 5-star Google ratings with a simple camera scan.
+                </p>
+
+                {/* Feature Highlights */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4 pt-1">
+                  <div className="flex items-center gap-2 text-xs text-slate-700">
+                    <CheckCircle2 size={14} className="text-[#DF9920] shrink-0" />
+                    <span>Direct 1-scan link to Google Review page</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-700">
+                    <CheckCircle2 size={14} className="text-[#DF9920] shrink-0" />
+                    <span>Boosts Google Maps SEO & local visibility</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-700">
+                    <CheckCircle2 size={14} className="text-[#DF9920] shrink-0" />
+                    <span>Durable high-quality acrylic / standee finish</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-700">
+                    <CheckCircle2 size={14} className="text-[#DF9920] shrink-0" />
+                    <span>Custom brand logo & custom QR included</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <span className="text-xs text-slate-500">
+                    Available in desk standees & countertop cards
+                  </span>
+                  <button
+                    onClick={() => onContactClick('Google Review QR Standee')}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-[#DF9920] text-white hover:bg-[#c98415] active:bg-[#b0720f] shadow-xs transition-colors cursor-pointer"
+                  >
+                    <span>Order Review Standee</span>
                     <ArrowRight size={14} />
                   </button>
                 </div>
