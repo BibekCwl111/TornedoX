@@ -15,15 +15,9 @@ export const Footer: React.FC = () => {
           Your Brand, Our Storm
         </p>
 
-        <p className="text-xs sm:text-sm font-medium text-slate-400 mb-3 tracking-wide">
+        <p className="text-xs sm:text-sm font-medium text-slate-400 mb-5 tracking-wide">
           Technology • Automation • Innovation
         </p>
-
-        {/* MSME Registration */}
-        <div className="text-xs text-slate-400 mb-5 pb-4 border-b border-slate-800/80 w-full max-w-sm">
-          <span>MSME Registration: </span>
-          <span className="font-mono text-slate-300 font-medium">UDYAM-WB-04-0018921</span>
-        </div>
 
         {/* Social Links */}
         <div className="flex items-center justify-center gap-6 mb-5">
