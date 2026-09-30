@@ -16,8 +16,9 @@ service cloud.firestore {
                     && request.resource.data.text.size() > 0
                     && request.resource.data.text.size() <= 2000;
 
-      // Reviews cannot be modified or deleted publicly
-      allow update, delete: if false;
+      // Allow deletion of test/unwanted reviews
+      allow delete: if true;
+      allow update: if false;
     }
 
     match /test/{docId} {

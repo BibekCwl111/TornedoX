@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Star, MessageSquarePlus, CheckCircle2, X, Send, Quote, Sparkles } from 'lucide-react';
+import { Star, MessageSquarePlus, CheckCircle2, X, Send, Quote, Sparkles, Trash2 } from 'lucide-react';
 import {
   collection,
   addDoc,
   onSnapshot,
-  query,
-  orderBy,
+  deleteDoc,
+  doc,
   serverTimestamp,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase.ts';
 
@@ -19,18 +18,21 @@ interface ReviewItem {
   rating: number;
   text: string;
   date: string;
-  createdAt?: Timestamp | null;
+  timestamp?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  createdAt?: any;
 }
 
 const STORAGE_KEY = 'tornedox_client_reviews';
 
 export const Reviews: React.FC = () => {
+  // Load initial cached reviews from localStorage so there's never an empty flash
   const [reviews, setReviews] = useState<ReviewItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {
       // fallback
@@ -50,47 +52,129 @@ export const Reviews: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const reviewsSectionRef = useRef<HTMLElement | null>(null);
 
-  // Real-time Firestore sync: updates automatically across all clients/devices
+  // Helper to extract numeric epoch millisecond timestamp for accurate sorting
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getReviewTime = (r: { timestamp?: number; createdAt?: any; date?: string }): number => {
+    if (r.timestamp && typeof r.timestamp === 'number') return r.timestamp;
+    if (r.createdAt) {
+      if (typeof r.createdAt.toMillis === 'function') return r.createdAt.toMillis();
+      if (typeof r.createdAt.seconds === 'number') return r.createdAt.seconds * 1000;
+    }
+    if (r.date) {
+      const parsed = Date.parse(r.date);
+      if (!isNaN(parsed)) return parsed;
+    }
+    return 0;
+  };
+
+  // Real-time Firestore sync: listens to all reviews in the collection
   useEffect(() => {
+    let unsubscribe = () => {};
+
     try {
       const reviewsCol = collection(db, 'reviews');
-      const q = query(reviewsCol, orderBy('createdAt', 'desc'));
 
-      const unsubscribe = onSnapshot(
-        q,
+      // Note: We deliberately query the collection directly without strict orderBy
+      // to guarantee that documents with pending server timestamps or missing createdAt
+      // are NEVER omitted from the query results!
+      unsubscribe = onSnapshot(
+        reviewsCol,
         (snapshot) => {
-          if (!snapshot.empty) {
-            const remoteReviews: ReviewItem[] = snapshot.docs.map((docSnap) => {
-              const data = docSnap.data();
-              return {
-                id: docSnap.id,
-                name: data.name || 'Anonymous',
-                role: data.role || undefined,
-                business: data.business || undefined,
-                rating: typeof data.rating === 'number' ? data.rating : 5,
-                text: data.text || '',
-                date: data.date || 'Recently',
-                createdAt: data.createdAt || null,
-              };
+          const remoteReviews: ReviewItem[] = snapshot.docs.map((docSnap) => {
+            const data = docSnap.data();
+            return {
+              id: docSnap.id,
+              name: data.name || 'Anonymous',
+              role: data.role || undefined,
+              business: data.business || undefined,
+              rating: typeof data.rating === 'number' ? data.rating : 5,
+              text: data.text || '',
+              date: data.date || 'Recently',
+              timestamp: typeof data.timestamp === 'number' ? data.timestamp : undefined,
+              createdAt: data.createdAt || null,
+            };
+          });
+
+          // Smart merge: merge all remote reviews with any pending optimistic local reviews
+          setReviews((prev) => {
+            const map = new Map<string, ReviewItem>();
+
+            // 1. Add all confirmed reviews from Firestore
+            remoteReviews.forEach((r) => map.set(r.id, r));
+
+            // 2. Preserve any in-flight optimistic reviews (with temporary 'rev-' id)
+            // that are not yet confirmed in remoteReviews
+            prev.forEach((p) => {
+              if (p.id.startsWith('rev-')) {
+                const alreadySynced = remoteReviews.some(
+                  (r) => r.name === p.name && r.text === p.text
+                );
+                if (!alreadySynced) {
+                  map.set(p.id, p);
+                }
+              }
             });
 
-            setReviews(remoteReviews);
+            // 3. Sort all reviews: newest first
+            const combined = Array.from(map.values()).sort(
+              (a, b) => getReviewTime(b) - getReviewTime(a)
+            );
+
+            // Update localStorage cache
             try {
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteReviews));
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(combined));
             } catch {
               // ignore
             }
+
+            return combined;
+          });
+
+          // If there are any older reviews previously saved in localStorage that
+          // never made it to Firestore, automatically sync them to Firestore once!
+          try {
+            const localSaved = localStorage.getItem(STORAGE_KEY);
+            if (localSaved) {
+              const parsed: ReviewItem[] = JSON.parse(localSaved);
+              if (Array.isArray(parsed)) {
+                parsed.forEach(async (item) => {
+                  const existsInRemote = snapshot.docs.some((d) => {
+                    const data = d.data();
+                    return data.name === item.name && data.text === item.text;
+                  });
+                  // If not in Firestore and valid, upload to Firestore
+                  if (!existsInRemote && item.name && item.text) {
+                    try {
+                      await addDoc(reviewsCol, {
+                        name: item.name,
+                        role: item.role || '',
+                        business: item.business || '',
+                        rating: item.rating || 5,
+                        text: item.text,
+                        date: item.date || 'Recently',
+                        timestamp: item.timestamp || Date.now(),
+                        createdAt: serverTimestamp(),
+                      });
+                    } catch {
+                      // ignore background migration errors
+                    }
+                  }
+                });
+              }
+            }
+          } catch {
+            // ignore
           }
         },
         (error) => {
-          console.warn('Firestore real-time sync fallback to local cache:', error.message);
+          console.warn('Firestore real-time sync warning:', error.message);
         }
       );
-
-      return () => unsubscribe();
     } catch (err) {
-      console.warn('Could not initialize Firestore reviews listener:', err);
+      console.warn('Could not initialize Firestore listener:', err);
     }
+
+    return () => unsubscribe();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,7 +182,8 @@ export const Reviews: React.FC = () => {
     if (!name.trim() || !text.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
-    const tempId = `rev-${Date.now()}`;
+    const now = Date.now();
+    const tempId = `rev-${now}-${Math.random().toString(36).substring(2, 6)}`;
     const formattedDate = new Date().toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -112,9 +197,10 @@ export const Reviews: React.FC = () => {
       rating: rating,
       text: text.trim(),
       date: formattedDate,
+      timestamp: now,
     };
 
-    // Optimistic UI update: show immediately on screen (0ms delay)
+    // Optimistic UI update: instantly shows at the very top of the list (0ms delay)
     const optimisticReview: ReviewItem = {
       id: tempId,
       ...newReviewData,
@@ -122,6 +208,7 @@ export const Reviews: React.FC = () => {
       business: newReviewData.business || undefined,
     };
 
+    // Prepend to current state so user sees it right away
     setReviews((prev) => [optimisticReview, ...prev.filter((r) => r.id !== tempId)]);
 
     // Clear form inputs & close modal immediately
@@ -132,24 +219,24 @@ export const Reviews: React.FC = () => {
     setRating(5);
     setIsModalOpen(false);
 
-    // Visual instant feedback: highlight card and show toast
+    // Visual feedback: glowing border & toast
     setNewlyAddedId(tempId);
     setShowToast(true);
 
-    // Smooth scroll to the newly created review
+    // Scroll smoothly to the newly added review
     setTimeout(() => {
       const el = document.getElementById(tempId);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
-    }, 50);
+    }, 60);
 
     setTimeout(() => {
       setShowToast(false);
       setNewlyAddedId(null);
-    }, 4500);
+    }, 4000);
 
-    // Persist to Cloud Database (Firestore) so it appears live on all phones & computers
+    // Persist to Cloud Database (Firestore)
     try {
       await addDoc(collection(db, 'reviews'), {
         ...newReviewData,
@@ -157,9 +244,14 @@ export const Reviews: React.FC = () => {
       });
     } catch (err) {
       console.error('Error saving review to Firestore:', err);
-      // Fallback update to localStorage in case offline
+      // Fallback save to localStorage if offline
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify([optimisticReview, ...reviews]));
+        const currentCached = localStorage.getItem(STORAGE_KEY);
+        const parsed = currentCached ? JSON.parse(currentCached) : [];
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify([optimisticReview, ...parsed.filter((p: ReviewItem) => p.id !== tempId)])
+        );
       } catch {
         // ignore
       }
@@ -168,7 +260,23 @@ export const Reviews: React.FC = () => {
     }
   };
 
-  // Calculate average rating
+  const handleDelete = async (id: string, clientName: string) => {
+    if (window.confirm(`Are you sure you want to remove the review by "${clientName}"?`)) {
+      // Optimistic local remove
+      setReviews((prev) => prev.filter((r) => r.id !== id));
+
+      // Remove from Firestore if it's a Firestore document ID
+      if (!id.startsWith('rev-')) {
+        try {
+          await deleteDoc(doc(db, 'reviews', id));
+        } catch (err) {
+          console.warn('Could not delete from Firestore:', err);
+        }
+      }
+    }
+  };
+
+  // Calculate average rating across all reviews
   const averageRating =
     reviews.length > 0
       ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1)
@@ -203,7 +311,7 @@ export const Reviews: React.FC = () => {
               </h2>
               <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Sync
+                Live Sync ({reviews.length})
               </span>
             </div>
             <p className="text-sm text-[#64748B]">
@@ -254,7 +362,7 @@ export const Reviews: React.FC = () => {
               </div>
             </div>
 
-            {/* Reviews List */}
+            {/* Reviews List: All reviews rendered in order */}
             <div className="space-y-3">
               {reviews.map((rev) => {
                 const isNew = rev.id === newlyAddedId;
@@ -264,7 +372,7 @@ export const Reviews: React.FC = () => {
                     id={rev.id}
                     className={`rounded-xl p-4 sm:p-5 transition-all duration-500 relative group ${
                       isNew
-                        ? 'bg-amber-50/80 border-2 border-amber-400 shadow-md ring-4 ring-amber-300/30'
+                        ? 'bg-amber-50/90 border-2 border-amber-400 shadow-md ring-4 ring-amber-300/30'
                         : 'bg-white border border-slate-200/80 shadow-xs hover:border-amber-300'
                     }`}
                   >
@@ -277,7 +385,7 @@ export const Reviews: React.FC = () => {
                             .map((n) => n[0])
                             .slice(0, 2)
                             .join('')
-                            .toUpperCase()}
+                            .toUpperCase() || 'CX'}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
@@ -326,6 +434,16 @@ export const Reviews: React.FC = () => {
                       />
                       <p className="italic">{rev.text}</p>
                     </div>
+
+                    {/* Delete option for admin / testing */}
+                    <button
+                      onClick={() => handleDelete(rev.id, rev.name)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-2 right-2 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
+                      title="Remove review"
+                      aria-label="Remove review"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 );
               })}
@@ -373,7 +491,7 @@ export const Reviews: React.FC = () => {
                   Write a Review
                 </h3>
                 <p className="text-xs text-slate-500 mb-4">
-                  Share your experience working with TornedoX. It will appear live on the website instantly!
+                  Share your experience working with TornedoX. All submitted reviews will stay visible on the page!
                 </p>
 
                 {/* Rating Selector */}
